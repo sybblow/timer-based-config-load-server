@@ -47,14 +47,14 @@ fn load_config_thread(config: &Mutex<Config>) {
 }
 
 fn load_config(config: &mut Config) {
-    let do_open = || -> std::io::Result<Vec<u8>> {
+    let do_open = || -> std::io::Result<String> {
         let mut f = try!(std::fs::File::open("config.toml"));
-        let mut buffer = Vec::<u8>::new();
-        try!(f.read_to_end(&mut buffer));
+        let mut buffer = String::new();
+        try!(f.read_to_string(&mut buffer));
 
         Ok(buffer)
     };
-    let content = do_open().ok().and_then(|it| String::from_utf8(it).ok());
+    let content = do_open().ok();
 
     let mut parser = toml::Parser::new(content.as_ref().map(|it| it.as_str()).unwrap_or(""));
     let toml_table = parser.parse();
