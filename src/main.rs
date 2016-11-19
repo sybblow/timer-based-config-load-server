@@ -65,14 +65,12 @@ fn load_config_thread(config: &Mutex<Config>) {
     };
 }
 
-fn sleep_loop(timer: Box<Timer>) -> Box<Future<Item = (), Error = TimerError>>
-{
+fn sleep_loop(timer: Box<Timer>) -> Box<Future<Item = (), Error = TimerError>> {
     Box::new(timer.sleep(Duration::from_secs(1))
         .and_then(move |_| {
             println!("try sleep again");
             sleep_loop(timer)
-        })
-    )
+        }))
 }
 
 fn load_config(config: &mut Config) {
