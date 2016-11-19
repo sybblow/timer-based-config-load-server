@@ -1,13 +1,21 @@
 extern crate crossbeam;
 extern crate toml;
 extern crate unix_socket;
+extern crate tokio_timer;
+extern crate futures;
 
 use std::io::Read;
 use std::sync::Mutex;
+use std::rc::*;
+use std::time::*;
 use unix_socket::UnixDatagram;
+use tokio_timer::{Timer, TimerError};
+use futures::{Future, IntoFuture};
 
 mod config;
+
 use config::Config;
+
 mod common;
 
 fn main() {
@@ -38,12 +46,33 @@ fn listen_thread(config: &Mutex<Config>) {
 // main/working/event loop thread
 fn load_config_thread(config: &Mutex<Config>) {
     println!("load config thread");
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
 
-        let mut config_gd = config.lock().unwrap();
-        load_config(&mut config_gd);
-    }
+    //    loop {
+    //        std::thread::sleep(std::time::Duration::from_secs(1));
+    //
+    //        let mut config_gd = config.lock().unwrap();
+    //        load_config(&mut config_gd);
+    //    }
+
+    let timer = Box::new(::tokio_timer::wheel()
+        .num_slots(8)
+        .max_timeout(Duration::from_secs(2))
+        .build());
+
+    match sleep_loop(timer).wait() {
+        Ok(_) => println!("sleep loop finished"),
+        Err(_) => println!("sleep loop failed"),
+    };
+}
+
+fn sleep_loop(timer: Box<Timer>) -> Box<Future<Item = (), Error = TimerError>>
+{
+    Box::new(timer.sleep(Duration::from_secs(1))
+        .and_then(move |_| {
+            println!("try sleep again");
+            sleep_loop(timer)
+        })
+    )
 }
 
 fn load_config(config: &mut Config) {
