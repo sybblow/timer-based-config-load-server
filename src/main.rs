@@ -3,24 +3,27 @@ extern crate toml;
 extern crate unix_socket;
 
 use std::io::Read;
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
 use unix_socket::UnixDatagram;
 
 mod config;
+
 use config::Config;
+
 mod common;
 
 fn main() {
     let config = Mutex::new(Config { target: "armv7-unknown-linux-gnueabihf".to_owned() });
 
+    let (tx, rx) = mpsc::channel();
     crossbeam::scope(|scope| {
-        scope.spawn(|| listen_thread(&config));
-        scope.spawn(|| load_config_thread(&config));
+        scope.spawn(|| listen_thread(&config, rx));
+        scope.spawn(|| load_config_thread(&config, tx));
     });
 }
 
 // Configuration manager thread
-fn listen_thread(config: &Mutex<Config>) {
+fn listen_thread(config: &Mutex<Config>, wakeup_listener: mpsc::Receiver<()>) {
     println!("listen thread");
     let socket = UnixDatagram::bind(common::SOCKET_PATH).unwrap();
 
@@ -32,17 +35,24 @@ fn listen_thread(config: &Mutex<Config>) {
         println!("socket {:?} sent {:?}", address, &buf[..count]);
         println!("trying unlock load config");
         drop(gd);
+
+        wakeup_listener.recv().unwrap();
     }
 }
 
 // main/working/event loop thread
-fn load_config_thread(config: &Mutex<Config>) {
+fn load_config_thread(config: &Mutex<Config>, wakeup_notifier: mpsc::Sender<()>) {
     println!("load config thread");
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
 
-        let mut config_gd = config.lock().unwrap();
-        load_config(&mut config_gd);
+        match config.try_lock() {
+            Ok(mut config_gd) => {
+                load_config(&mut config_gd);
+                wakeup_notifier.send(()).unwrap();
+            }
+            Err(_) => (),
+        }
     }
 }
 
