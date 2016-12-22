@@ -102,15 +102,16 @@ fn load_config(config: &mut Config) {
     };
     let content = do_open().ok();
 
-    let mut parser = toml::Parser::new(content.as_ref().map(|it| it.as_str()).unwrap_or(""));
-    let toml_table = parser.parse();
+    let toml_table = content.as_ref()
+        .map(|content| toml::Parser::new(content))
+        .and_then(|mut parser| parser.parse());
     let config_data = toml_table.as_ref()
         .and_then(|it| it.get(&"target".to_owned()))
         .and_then(|it| it.as_str());
 
-    if let Some(target_config) = config_data {
-        config.target = target_config.to_owned();
-        println!("load config success: {:#?}", target_config);
+    if let Some(target_conf) = config_data {
+        config.target = target_conf.to_owned();
+        println!("load config success: {:#?}", config);
     } else {
         println!("load config failed");
     }
