@@ -5,10 +5,8 @@ extern crate tokio_timer;
 extern crate futures;
 
 use std::io::Read;
-use std::time::Duration;
-use std::sync::{Mutex, Arc, mpsc};
+use std::sync::{Mutex, mpsc};
 use unix_socket::UnixDatagram;
-use tokio_timer::{Timer, TimerError};
 use futures::Future;
 
 mod config;
@@ -17,26 +15,25 @@ use config::Config;
 
 mod common;
 
+mod work;
 
-type MyError = TimerError;
-type BoxFuture = Box<Future<Item = (), Error = MyError>>;
+use work::CycleWorker;
 
-type MyConfig = Arc<Mutex<Config>>;
+type MyConfig<'a> = &'a Mutex<Config>;
 
 
 fn main() {
-    let config = Arc::new(Mutex::new(
+    let config = Mutex::new(
         Config {
             target: "armv7-unknown-linux-gnueabihf".to_owned()
         }
-    ));
-    let config1 = config.clone();
+    );
 
     let (tx, rx) = mpsc::channel();
 
     crossbeam::scope(|scope| {
-        scope.spawn(|| listen_thread(config, rx));
-        scope.spawn(|| work_thread(config1, tx));
+        scope.spawn(|| listen_thread(&config, rx));
+        scope.spawn(|| work_thread(&config, tx));
     });
 }
 
@@ -61,35 +58,21 @@ fn listen_thread(config: MyConfig, wakeup_listener: mpsc::Receiver<()>) {
 // main/working/event loop thread, and check lock to load config when timer arrived
 fn work_thread(config: MyConfig, wakeup_notifier: mpsc::Sender<()>) {
     println!("load config thread");
+    let do_it = || {
+        match config.try_lock() {
+            Ok(mut config_gd) => {
+                load_config(&mut config_gd);
+                wakeup_notifier.send(()).unwrap();
+            }
+            Err(_) => (),
+        }
+    };
 
-    let timer = Box::new(::tokio_timer::wheel()
-        .num_slots(8)
-        .max_timeout(Duration::from_secs(2))
-        .build());
-
-    // TODO: select other io task here
-    match sleep_loop(timer, config, wakeup_notifier).wait() {
+    let cycle_worker = CycleWorker::new(do_it);
+    match cycle_worker.cycle_run().wait() {
         Ok(_) => println!("sleep loop finished"),
         Err(_) => println!("sleep loop failed"),
     };
-}
-
-fn sleep_loop(timer: Box<Timer>, config: MyConfig, wakeup_notifier: mpsc::Sender<()>) -> BoxFuture {
-    let ft = timer.sleep(Duration::from_secs(1))
-        .and_then(move |_| {
-            // try to load config
-            match config.try_lock() {
-                Ok(mut config_gd) => {
-                    load_config(&mut config_gd);
-                    wakeup_notifier.send(()).unwrap();
-                }
-                Err(_) => (),
-            }
-
-            println!("try sleep again");
-            sleep_loop(timer, config, wakeup_notifier)
-        });
-    Box::new(ft)
 }
 
 fn load_config(config: &mut Config) {
