@@ -7,7 +7,6 @@ extern crate futures;
 use std::io::Read;
 use std::sync::{Mutex, mpsc};
 use unix_socket::UnixDatagram;
-use futures::Future;
 
 mod config;
 
@@ -17,17 +16,13 @@ mod common;
 
 mod work;
 
-use work::CycleWorker;
+use work::{scope_run, await};
 
 type MyConfig<'a> = &'a Mutex<Config>;
 
 
 fn main() {
-    let config = Mutex::new(
-        Config {
-            target: "armv7-unknown-linux-gnueabihf".to_owned()
-        }
-    );
+    let config = Mutex::new(Config { target: "armv7-unknown-linux-gnueabihf".to_owned() });
 
     let (tx, rx) = mpsc::channel();
 
@@ -58,7 +53,7 @@ fn listen_thread(config: MyConfig, wakeup_listener: mpsc::Receiver<()>) {
 // main/working/event loop thread, and check lock to load config when timer arrived
 fn work_thread(config: MyConfig, wakeup_notifier: mpsc::Sender<()>) {
     println!("load config thread");
-    let do_it = || {
+    let ft = scope_run(|| {
         match config.try_lock() {
             Ok(mut config_gd) => {
                 load_config(&mut config_gd);
@@ -66,10 +61,8 @@ fn work_thread(config: MyConfig, wakeup_notifier: mpsc::Sender<()>) {
             }
             Err(_) => (),
         }
-    };
-
-    let cycle_worker = CycleWorker::new(do_it);
-    match cycle_worker.cycle_run().wait() {
+    });
+    match await(ft) {
         Ok(_) => println!("sleep loop finished"),
         Err(_) => println!("sleep loop failed"),
     };

@@ -24,7 +24,8 @@ impl<'scope> CycleWorker<'scope> {
     }
 
     pub fn cycle_run(self) -> BoxFuture<'scope> {
-        let ft = self.timer.sleep(Duration::from_secs(1))
+        let ft = self.timer
+            .sleep(Duration::from_secs(1))
             .and_then(move |_| {
                 // try to do work
                 (*self.call_fn)();
@@ -34,6 +35,23 @@ impl<'scope> CycleWorker<'scope> {
             });
         Box::new(ft)
     }
+}
+
+#[inline]
+pub fn scope_run<'scope, F>(f: F) -> BoxFuture<'scope>
+    where F: Fn() + 'scope
+{
+    let cycle_worker = CycleWorker::new(f);
+
+    cycle_worker.cycle_run()
+}
+
+// TODO: stupid compiler hack
+#[inline]
+pub fn await<F, I, E>(ft: F) -> Result<I, E>
+    where F: Future<Item = I, Error = E> + Sized
+{
+    ft.wait()
 }
 
 #[cfg(test)]
@@ -46,10 +64,12 @@ mod tests {
     fn simple() {
         let message = "simple run once";
         let s = &message;
-        let do_it = || { println!("{}", s); };
+        let do_it = || {
+            println!("{}", s);
+        };
 
-        let cycle_worker = CycleWorker::new(do_it);
-        match cycle_worker.cycle_run().wait() {
+        let ft = scope_run(do_it);
+        match await(ft) {
             Ok(_) => println!("sleep loop finished"),
             Err(_) => println!("sleep loop failed"),
         };
@@ -57,4 +77,3 @@ mod tests {
         println!("still have: {}", message);
     }
 }
-
