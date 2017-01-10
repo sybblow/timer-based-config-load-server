@@ -1,7 +1,7 @@
 extern crate crossbeam;
 extern crate toml;
 extern crate unix_socket;
-extern crate tokio_timer;
+extern crate tokio_core;
 extern crate futures;
 
 use std::io::Read;
@@ -16,7 +16,7 @@ mod common;
 
 mod work;
 
-use work::{scope_run, await};
+use work::interval_run;
 
 type MyConfig<'a> = &'a Mutex<Config>;
 
@@ -53,7 +53,7 @@ fn listen_thread(config: MyConfig, wakeup_listener: mpsc::Receiver<()>) {
 // main/working/event loop thread, and check lock to load config when timer arrived
 fn work_thread(config: MyConfig, wakeup_notifier: mpsc::Sender<()>) {
     println!("load config thread");
-    let ft = scope_run(|| {
+    let ret = interval_run(|| {
         match config.try_lock() {
             Ok(mut config_gd) => {
                 load_config(&mut config_gd);
@@ -62,7 +62,7 @@ fn work_thread(config: MyConfig, wakeup_notifier: mpsc::Sender<()>) {
             Err(_) => (),
         }
     });
-    match await(ft) {
+    match ret {
         Ok(_) => println!("sleep loop finished"),
         Err(_) => println!("sleep loop failed"),
     };

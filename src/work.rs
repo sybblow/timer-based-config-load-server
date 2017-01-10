@@ -1,57 +1,28 @@
 use std::time::Duration;
-use tokio_timer::{Timer, TimerError};
-use futures::Future;
+use std::io;
 
-type MyError = TimerError;
-type BoxFuture<'a> = Box<Future<Item = (), Error = MyError> + 'a>;
+use futures::stream::Stream;
+use tokio_core::reactor::{Core, Interval};
 
-pub struct CycleWorker<'a> {
-    call_fn: Box<Fn() + 'a>,
-    timer: Box<Timer>,
-}
+type MyError = io::Error;
+type MyBoxStream<'a> = Box<Stream<Item = (), Error = MyError> + 'a>;
 
-impl<'scope> CycleWorker<'scope> {
-    pub fn new<F>(f: F) -> Self
-        where F: Fn() + 'scope
-    {
-        CycleWorker {
-            call_fn: Box::new(f),
-            timer: Box::new(::tokio_timer::wheel()
-                .num_slots(8)
-                .max_timeout(Duration::from_secs(2))
-                .build()),
-        }
-    }
-
-    pub fn cycle_run(self) -> BoxFuture<'scope> {
-        let ft = self.timer
-            .sleep(Duration::from_secs(1))
-            .and_then(move |_| {
-                // try to do work
-                (*self.call_fn)();
-
-                println!("try sleep again");
-                self.cycle_run()
-            });
-        Box::new(ft)
-    }
-}
-
-#[inline]
-pub fn scope_run<'scope, F>(f: F) -> BoxFuture<'scope>
+// TODO: return BoxStream, and select other io task outside
+pub fn interval_run<'scope, F>(f: F) -> io::Result<()>
     where F: Fn() + 'scope
 {
-    let cycle_worker = CycleWorker::new(f);
+    let mut l = Core::new()?;
+    let dur = Duration::from_secs(1);
 
-    cycle_worker.cycle_run()
-}
+    let interval = Interval::new(dur, &l.handle())?;
+    let task = interval.for_each(|()| {
+        f();
+        println!("try sleep again");
+        Ok(())
+    });
+    l.run(task)?;
 
-// TODO: stupid compiler hack
-#[inline]
-pub fn await<F, I, E>(ft: F) -> Result<I, E>
-    where F: Future<Item = I, Error = E> + Sized
-{
-    ft.wait()
+    Ok(())
 }
 
 #[cfg(test)]
@@ -68,8 +39,7 @@ mod tests {
             println!("{}", s);
         };
 
-        let ft = scope_run(do_it);
-        match await(ft) {
+        match interval_run(do_it) {
             Ok(_) => println!("sleep loop finished"),
             Err(_) => println!("sleep loop failed"),
         };
